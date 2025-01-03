@@ -1,75 +1,84 @@
-const User = require("../models/User");
-const nodemailer = require("nodemailer");
+const User = require("../models/User"); // Assuming you have a User model
+const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
-// Configure Nodemailer
-const transporter = nodemailer.createTransport({
-  service: "Gmail", // or any email service
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+// Register User
+exports.registerUser = async (req, res, next) => {
+  const { name, email, password } = req.body;
 
-// Generate OTP
-const generateOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-};
-
-// Send OTP Email
-const sendOTPEmail = async (email, otp) => {
-  const mailOptions = {
-    from: process.env.EMAIL_USER,
-    to: email,
-    subject: "Your OTP Code",
-    text: `Your OTP code is ${otp}`,
-  };
-  await transporter.sendMail(mailOptions);
-};
-
-// @desc    Send OTP to email
-// @route   POST /api/auth/send-otp
-// @access  Public
-exports.sendOTP = async (req, res) => {
-  const { email } = req.body;
   try {
-    let user = await User.findOne({ email });
-    const otp = generateOTP();
-    const otpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
-
-    if (user) {
-      user.otp = otp;
-      user.otpExpires = otpExpires;
-    } else {
-      user = new User({ email, otp, otpExpires });
+    // Check if user exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: "User already exists" });
     }
-    await user.save();
-    await sendOTPEmail(email, otp);
-    res.status(200).json({ message: "OTP sent to email" });
+
+    // Hash the password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Create a new user
+    const newUser = new User({
+      name,
+      email,
+      password: hashedPassword,
+    });
+
+    // Save user to DB
+    await newUser.save();
+    res.status(201).json({ message: "User registered successfully" });
   } catch (error) {
-    res.status(500).json({ message: "Server Error" });
+    console.error(error);
+    next(error);
   }
 };
 
-// @desc    Verify OTP and login
-// @route   POST /api/auth/verify-otp
-// @access  Public
-exports.verifyOTP = async (req, res) => {
-  const { email, otp } = req.body;
+// Login User
+const loginUser = async (req, res, next) => {
+  const { email, password } = req.body;
+
   try {
-    const user = await User.findOne({ email, otp });
+    // Check if user exists
+    const user = await User.findOne({ email });
     if (!user) {
-      return res.status(400).json({ message: "Invalid OTP" });
+      return res.status(404).json({ message: "User not found" });
     }
-    if (user.otpExpires < Date.now()) {
-      return res.status(400).json({ message: "OTP expired" });
+
+    // Compare passwords
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Invalid credentials" });
     }
-    // Generate JWT
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+
+    // Generate JWT token
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, {
       expiresIn: "1h",
     });
-    res.status(200).json({ token });
+
+    res.status(200).json({
+      message: "Login successful",
+      token,
+    });
   } catch (error) {
-    res.status(500).json({ message: "Server Error" });
+    console.error(error);
+    next(error);
   }
 };
+
+// Get User Details
+exports.getUserDetails = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.userId); // Assuming the userId is stored in the token
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    res.status(200).json(user);
+  } catch (error) {
+    console.error(error);
+    next(error);
+  }
+};
+
+// Export default for `loginUser`
+exports.loginUser = loginUser;
+module.exports = loginUser;
