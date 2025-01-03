@@ -81,4 +81,3 @@ exports.getUserDetails = async (req, res, next) => {
 
 // Export default for `loginUser`
 exports.loginUser = loginUser;
-module.exports = loginUser;
